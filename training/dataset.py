@@ -50,7 +50,10 @@ def load_cmapss(path: str | Path) -> pd.DataFrame:
     return dataframe
 
 
-def add_train_rul(dataframe: pd.DataFrame) -> pd.DataFrame:
+def add_train_rul(
+    dataframe: pd.DataFrame,
+    max_rul: int | None = None,
+) -> pd.DataFrame:
     """Calculate RUL for complete run-to-failure training trajectories.
 
     RUL = final cycle for the engine - current cycle
@@ -66,6 +69,11 @@ def add_train_rul(dataframe: pd.DataFrame) -> pd.DataFrame:
 
     max_cycles = result.groupby("unit_id")["time_cycle"].transform("max")
     result["rul"] = max_cycles - result["time_cycle"]
+
+    if max_rul is not None:
+        if max_rul <= 0:
+            raise ValueError("max_rul must be greater than zero")
+        result["rul"] = result["rul"].clip(upper=max_rul)
 
     return result
 

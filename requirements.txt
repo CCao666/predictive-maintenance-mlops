@@ -3,4 +3,4 @@ pandas
 pytest
 scikit-learn
 joblib
-
+torch

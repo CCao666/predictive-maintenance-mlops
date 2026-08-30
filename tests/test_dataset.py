@@ -58,6 +58,19 @@ def test_add_train_rul_does_not_modify_original():
     assert result["rul"].tolist() == [1, 0]
 
 
+def test_add_train_rul_can_cap_early_life_targets():
+    dataframe = pd.DataFrame(
+        {
+            "unit_id": [1, 1, 1],
+            "time_cycle": [1, 100, 201],
+        }
+    )
+
+    result = add_train_rul(dataframe, max_rul=125)
+
+    assert result["rul"].tolist() == [125, 101, 0]
+
+
 def test_create_sequences():
     dataframe = add_train_rul(load_cmapss(DATA_PATH))
 

@@ -1,28 +1,48 @@
-from pathlib import Path
-
-from training.dataset import add_train_rul, load_cmapss
+from training.dataset import (
+    add_train_rul,
+    create_sequences,
+    load_cmapss,
+)
+from training.preprocessing import (
+    fit_feature_scaler,
+    transform_features,
+)
 from training.split import split_by_engine
 
 
-dataframe = load_cmapss(
-    Path("data/cmapss/train_FD001.txt")
+dataframe = add_train_rul(
+    load_cmapss("data/cmapss/train_FD001.txt"),
+    max_rul=125,
 )
-dataframe = add_train_rul(dataframe)
 
-train_dataframe, validation_dataframe = split_by_engine(
+train_df, validation_df = split_by_engine(
     dataframe,
     validation_size=0.2,
     random_state=42,
 )
 
-train_engines = set(train_dataframe["unit_id"])
-validation_engines = set(validation_dataframe["unit_id"])
+scaler = fit_feature_scaler(train_df)
 
-print(f"Training engines: {len(train_engines)}")
-print(f"Validation engines: {len(validation_engines)}")
-print(f"Training rows: {len(train_dataframe)}")
-print(f"Validation rows: {len(validation_dataframe)}")
-print(
-    "Overlapping engines:",
-    train_engines.intersection(validation_engines),
+scaled_train_df = transform_features(
+    train_df,
+    scaler,
 )
+scaled_validation_df = transform_features(
+    validation_df,
+    scaler,
+)
+
+X_train, y_train = create_sequences(
+    scaled_train_df,
+    sequence_length=50,
+)
+
+X_validation, y_validation = create_sequences(
+    scaled_validation_df,
+    sequence_length=50,
+)
+
+print(f"X_train: {X_train.shape}")
+print(f"y_train: {y_train.shape}")
+print(f"X_validation: {X_validation.shape}")
+print(f"y_validation: {y_validation.shape}")
