@@ -23,6 +23,11 @@ from training.dataset import (
     load_cmapss,
 )
 from training.model import ReferenceLSTMRegressor
+from training.mlflow_tracking import (
+    DEFAULT_EXPERIMENT_NAME,
+    DEFAULT_TRACKING_URI,
+    MLflowExperimentTracker,
+)
 from training.preprocessing import fit_feature_scaler, transform_features
 from training.split import split_by_engine
 from training.torch_dataset import RULSequenceDataset
@@ -155,6 +160,7 @@ def train_lstm(
     random_state: int = 42,
     early_stopping_patience: int = 20,
     lr_patience: int = 10,
+    tracker: MLflowExperimentTracker | None = None,
 ) -> tuple[ReferenceLSTMRegressor, RobustScaler, dict[str, object]]:
     """Train the reference model and restore its best validation weights."""
     if epochs <= 0:
@@ -224,6 +230,8 @@ def train_lstm(
             "learning_rate": current_lr,
         }
         history.append(epoch_metrics)
+        if tracker is not None:
+            tracker.log_epoch(epoch_metrics, step=epoch)
         print(
             f"Epoch {epoch:03d}/{epochs} | "
             f"train RMSE {epoch_metrics['train_rmse']:.2f} | "
@@ -284,7 +292,7 @@ def save_artifacts(
     scaler: RobustScaler,
     metadata: dict[str, object],
     artifacts_directory: Path = ARTIFACTS_DIRECTORY,
-) -> None:
+) -> dict[str, Path]:
     """Save a self-describing model checkpoint, scaler, and metadata."""
     artifacts_directory.mkdir(parents=True, exist_ok=True)
     model_path = artifacts_directory / "reference_lstm_model.pt"
@@ -305,6 +313,11 @@ def save_artifacts(
     print(f"Saved model: {model_path}")
     print(f"Saved scaler: {scaler_path}")
     print(f"Saved metrics: {metadata_path}")
+    return {
+        "model": model_path,
+        "scaler": scaler_path,
+        "metadata": metadata_path,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -315,20 +328,95 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument("--sequence-length", type=int, default=DEFAULT_SEQUENCE_LENGTH)
     parser.add_argument("--max-rul", type=int, default=DEFAULT_MAX_RUL)
+    parser.add_argument("--experiment-name", default=DEFAULT_EXPERIMENT_NAME)
+    parser.add_argument("--run-name", default=None)
+    parser.add_argument("--tracking-uri", default=DEFAULT_TRACKING_URI)
+    parser.add_argument("--disable-mlflow", action="store_true")
     return parser.parse_args()
 
 
+def run_tracked_training(
+    *,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    sequence_length: int,
+    max_rul: int,
+    tracking_uri: str,
+    experiment_name: str,
+    run_name: str | None,
+    enable_mlflow: bool = True,
+    tags: dict[str, str] | None = None,
+) -> str | None:
+    """Run one training experiment and return its MLflow run ID."""
+    tracker = None
+    run_id = None
+    if enable_mlflow:
+        tracker = MLflowExperimentTracker(
+            tracking_uri=tracking_uri,
+            experiment_name=experiment_name,
+        )
+        run_id = tracker.start_run(
+            run_name=run_name,
+            tags={
+                "model_type": "ReferenceLSTMRegressor",
+                "task": "remaining_useful_life_regression",
+                "dataset": "NASA_CMAPSS_FD001",
+                "framework": "pytorch",
+                **(tags or {}),
+            },
+        )
+        tracker.log_params(
+            {
+                "sequence_length": sequence_length,
+                "max_rul": max_rul,
+                "batch_size": batch_size,
+                "maximum_epochs": epochs,
+                "learning_rate": learning_rate,
+                "random_state": 42,
+                "validation_size": 0.2,
+                "scaler": "RobustScaler",
+                "lstm_hidden_sizes": "128,64,32",
+                "attention_units": 64,
+                "dense_sizes": "64,32,16",
+            }
+        )
+        print(f"MLflow run ID: {run_id}")
+
+    try:
+        model, scaler, metadata = train_lstm(
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            sequence_length=sequence_length,
+            max_rul=max_rul,
+            tracker=tracker,
+        )
+        artifact_paths = save_artifacts(model, scaler, metadata)
+        if tracker is not None:
+            tracker.log_training_result(metadata, artifact_paths, model=model)
+            tracker.end_run(status="FINISHED")
+    except Exception:
+        if tracker is not None:
+            tracker.end_run(status="FAILED")
+        raise
+    return run_id
+
+
 def main() -> None:
-    """Train the reference model and save deployable local artifacts."""
+    """Train, save artifacts, and record the experiment in MLflow."""
     args = parse_args()
-    model, scaler, metadata = train_lstm(
+    run_tracked_training(
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         sequence_length=args.sequence_length,
         max_rul=args.max_rul,
+        tracking_uri=args.tracking_uri,
+        experiment_name=args.experiment_name,
+        run_name=args.run_name,
+        enable_mlflow=not args.disable_mlflow,
     )
-    save_artifacts(model, scaler, metadata)
 
 
 if __name__ == "__main__":

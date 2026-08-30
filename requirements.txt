@@ -4,3 +4,4 @@ pytest
 scikit-learn
 joblib
 torch
+mlflow

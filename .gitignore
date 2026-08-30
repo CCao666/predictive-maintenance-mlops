@@ -5,6 +5,6 @@ __pycache__/
 .venv/
 models/
 mlruns/
+mlflow.db*
 artifacts/
 upstream-reference/
-
