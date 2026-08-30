@@ -1,5 +1,4 @@
 """Load C-MAPSS data, calculate RUL labels, and create sequences."""
-"""Load C-MAPSS data, calculate RUL labels, and create sequences."""
 
 from pathlib import Path
 
