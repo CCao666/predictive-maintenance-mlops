@@ -1,10 +1,7 @@
 """Compare a small upstream-derived LSTM training parameter set in MLflow."""
 
-from __future__ import annotations
-
 import argparse
 import json
-from pathlib import Path
 
 from mlflow.tracking import MlflowClient
 
@@ -12,7 +9,11 @@ from training.mlflow_tracking import (
     DEFAULT_EXPERIMENT_NAME,
     DEFAULT_TRACKING_URI,
 )
-from training.train_lstm import ARTIFACTS_DIRECTORY, run_tracked_training
+from training.train_lstm import (
+    ARTIFACTS_DIRECTORY,
+    TrainingConfig,
+    run_tracked_training,
+)
 
 
 TRIALS = [
@@ -46,12 +47,13 @@ def run_parameter_selection(
 
     for index, trial in enumerate(TRIALS, start=1):
         print(f"Starting tuning trial {index}/{len(TRIALS)}: {trial['name']}")
-        run_id = run_tracked_training(
+        config = TrainingConfig(
             epochs=epochs,
             batch_size=trial["batch_size"],
             learning_rate=trial["learning_rate"],
-            sequence_length=50,
-            max_rul=125,
+        )
+        run_id = run_tracked_training(
+            config,
             tracking_uri=tracking_uri,
             experiment_name=experiment_name,
             run_name=trial["name"],

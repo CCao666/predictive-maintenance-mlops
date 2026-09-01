@@ -1,12 +1,11 @@
 """MLflow experiment tracking for RUL model training."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
 import mlflow
 from mlflow.tracking import MlflowClient
+from torch import nn
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -25,20 +24,18 @@ class MLflowExperimentTracker:
         artifact_location: str = DEFAULT_ARTIFACT_LOCATION,
     ) -> None:
         mlflow.set_tracking_uri(tracking_uri)
-        self.tracking_uri = tracking_uri
         self.experiment_name = experiment_name
-        self.artifact_location = artifact_location
         self.client = MlflowClient(tracking_uri=tracking_uri)
-        self.experiment_id = self._get_or_create_experiment()
+        self.experiment_id = self._get_or_create_experiment(artifact_location)
         self.run_id: str | None = None
 
-    def _get_or_create_experiment(self) -> str:
+    def _get_or_create_experiment(self, artifact_location: str) -> str:
         experiment = self.client.get_experiment_by_name(self.experiment_name)
         if experiment is not None:
             return experiment.experiment_id
         return self.client.create_experiment(
             self.experiment_name,
-            artifact_location=self.artifact_location,
+            artifact_location=artifact_location,
         )
 
     def start_run(
@@ -79,37 +76,29 @@ class MLflowExperimentTracker:
         self,
         metadata: dict[str, Any],
         artifact_paths: dict[str, Path],
-        model: Any | None = None,
+        model: nn.Module | None = None,
     ) -> None:
         """Log best metrics, full metadata, and deployable artifacts."""
         self._require_active_run()
-        mlflow.log_metrics(
-            {
-                "best_validation_rmse": float(
-                    metadata["best_validation_rmse"]
-                ),
-                "best_epoch": float(metadata["best_epoch"]),
-                "completed_epochs": float(
-                    metadata["training"]["completed_epochs"]
-                ),
-            }
-        )
+        training = metadata["training"]
+        preprocessing = metadata["preprocessing"]
+        mlflow.log_metrics({
+            "best_validation_rmse": metadata["best_validation_rmse"],
+            "best_epoch": metadata["best_epoch"],
+            "completed_epochs": training["completed_epochs"],
+        })
         mlflow.log_dict(metadata, "metadata/training_metrics.json")
         for artifact_path in artifact_paths.values():
             mlflow.log_artifact(str(artifact_path), artifact_path="model_bundle")
         if model is not None:
             mlflow.pytorch.log_model(
                 pytorch_model=model,
-                artifact_path="model",
+                name="model",
                 serialization_format="pickle",
                 metadata={
-                    "sequence_length": metadata["preprocessing"][
-                        "sequence_length"
-                    ],
-                    "max_rul": metadata["preprocessing"]["max_rul"],
-                    "feature_count": len(
-                        metadata["preprocessing"]["feature_columns"]
-                    ),
+                    "sequence_length": preprocessing["sequence_length"],
+                    "max_rul": preprocessing["max_rul"],
+                    "feature_count": len(preprocessing["feature_columns"]),
                 },
             )
 

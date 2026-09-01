@@ -5,7 +5,6 @@ import pytest
 import torch
 
 from training.model import (
-    LSTMRegressor,
     ReferenceLSTMRegressor,
     load_reference_model,
 )
@@ -34,28 +33,6 @@ def test_dataset_rejects_mismatched_sample_counts():
         RULSequenceDataset(sequences, targets)
 
 
-def test_lstm_returns_one_prediction_per_sequence():
-    model = LSTMRegressor(
-        input_size=24,
-        hidden_size=16,
-        num_layers=2,
-        dropout=0.1,
-    )
-    inputs = torch.zeros((4, 30, 24), dtype=torch.float32)
-
-    predictions = model(inputs)
-
-    assert predictions.shape == (4,)
-
-
-def test_lstm_rejects_wrong_feature_count():
-    model = LSTMRegressor(input_size=24)
-    inputs = torch.zeros((4, 30, 23), dtype=torch.float32)
-
-    with pytest.raises(ValueError):
-        model(inputs)
-
-
 def test_reference_model_matches_upstream_architecture():
     model = ReferenceLSTMRegressor()
 
@@ -77,6 +54,14 @@ def test_reference_model_returns_one_prediction_per_sequence():
     predictions = model(inputs)
 
     assert predictions.shape == (4,)
+
+
+def test_reference_model_rejects_wrong_feature_count():
+    model = ReferenceLSTMRegressor()
+    inputs = torch.zeros((4, 50, 23), dtype=torch.float32)
+
+    with pytest.raises(ValueError):
+        model(inputs)
 
 
 def test_saved_reference_model_reloads_with_identical_predictions(tmp_path):

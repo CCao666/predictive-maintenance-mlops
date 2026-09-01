@@ -4,7 +4,7 @@ import mlflow
 from mlflow.tracking import MlflowClient
 
 from training.mlflow_tracking import MLflowExperimentTracker
-from training.model import LSTMRegressor
+from training.model import ReferenceLSTMRegressor
 
 
 def test_mlflow_tracker_records_params_metrics_and_artifact(tmp_path):
@@ -39,7 +39,13 @@ def test_mlflow_tracker_records_params_metrics_and_artifact(tmp_path):
             "feature_columns": ["sensor_1", "sensor_2"],
         },
     }
-    model = LSTMRegressor(input_size=2, hidden_size=4, num_layers=1)
+    model = ReferenceLSTMRegressor(
+        input_size=2,
+        lstm_hidden_sizes=[4, 3, 2],
+        attention_units=2,
+        dense_sizes=[4, 2, 1],
+        dense_dropouts=[0.0, 0.0, 0.0],
+    )
     tracker.log_training_result(metadata, {"model": artifact}, model=model)
     tracker.end_run()
 

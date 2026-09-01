@@ -1,10 +1,41 @@
 # Real-Time Predictive Maintenance ML Platform
 
-An end-to-end platform for predicting remaining useful life (RUL) from NASA C-MAPSS turbofan sensor data.
+Predicts remaining useful life (RUL) from NASA C-MAPSS turbofan sensor data.
+The current implementation covers data preparation, a Random Forest baseline,
+an LSTM reference model, MLflow experiment tracking, parameter selection, and
+model registration.
 
-## Current milestone
+## Quick checks
 
-Build and validate a reproducible FD001 data pipeline before adding model training or streaming infrastructure.
+```bash
+source .venv/bin/activate
+python -m pytest -q
+python -m training.inspect_data
+```
 
-`upstream-reference/` is read-only reference material. Project code lives in the top-level folders of this repository.
+## Train and track
 
+```bash
+python -m training.train_lstm --run-name reference-lstm
+```
+
+Training uses engine-level splitting, a train-only `RobustScaler`, 50-cycle
+sequences, capped RUL labels, early stopping, and learning-rate reduction.
+
+## MLflow
+
+```bash
+mlflow server \
+  --backend-store-uri sqlite:///mlflow.db \
+  --host 127.0.0.1 \
+  --port 5000
+```
+
+The registered production candidate is available as:
+
+```text
+models:/predictive-maintenance-rul@champion
+```
+
+`upstream-reference/` is read-only reference material and is not part of the
+project implementation.

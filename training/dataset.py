@@ -58,9 +58,7 @@ def add_train_rul(
 
     RUL = final cycle for the engine - current cycle
     """
-    required_columns = {"unit_id", "time_cycle"}
-
-    if not required_columns.issubset(dataframe.columns):
+    if not {"unit_id", "time_cycle"}.issubset(dataframe.columns):
         raise ValueError(
             "DataFrame must contain unit_id and time_cycle columns"
         )
@@ -90,7 +88,7 @@ def create_sequences(
         raise ValueError("sequence_length must be greater than zero")
 
     required_columns = {"unit_id", "time_cycle", "rul", *FEATURE_COLUMNS}
-    missing_columns = required_columns.difference(dataframe.columns)
+    missing_columns = required_columns - set(dataframe.columns)
 
     if missing_columns:
         raise ValueError(
@@ -108,9 +106,7 @@ def create_sequences(
         )
         rul_values = engine_data["rul"].to_numpy(dtype=np.float32)
 
-        number_of_windows = len(engine_data) - sequence_length + 1
-
-        for start_index in range(max(0, number_of_windows)):
+        for start_index in range(len(engine_data) - sequence_length + 1):
             end_index = start_index + sequence_length
 
             sequences.append(feature_values[start_index:end_index])

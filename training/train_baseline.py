@@ -24,20 +24,13 @@ def train_baseline(
     data_path: Path = DEFAULT_DATA_PATH,
 ) -> tuple[RandomForestRegressor, dict[str, float]]:
     """Train and evaluate a Random Forest RUL baseline."""
-    dataframe = load_cmapss(data_path)
-    dataframe = add_train_rul(dataframe)
+    dataframe = add_train_rul(load_cmapss(data_path))
 
     train_df, validation_df = split_by_engine(
         dataframe=dataframe,
         validation_size=0.2,
         random_state=42,
     )
-
-    X_train = train_df[FEATURE_COLUMNS]
-    y_train = train_df["rul"]
-
-    X_validation = validation_df[FEATURE_COLUMNS]
-    y_validation = validation_df["rul"]
 
     model = RandomForestRegressor(
         n_estimators=100,
@@ -47,27 +40,15 @@ def train_baseline(
         n_jobs=-1,
     )
 
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_validation)
+    model.fit(train_df[FEATURE_COLUMNS], train_df["rul"])
+    predictions = model.predict(validation_df[FEATURE_COLUMNS])
+    targets = validation_df["rul"]
 
     metrics = {
-        "mae": float(
-            mean_absolute_error(y_validation, predictions)
-        ),
-        "rmse": float(
-            mean_squared_error(
-                y_validation,
-                predictions,
-            )
-            ** 0.5
-        ),
-        "training_engines": int(
-            train_df["unit_id"].nunique()
-        ),
-        "validation_engines": int(
-            validation_df["unit_id"].nunique()
-        ),
+        "mae": float(mean_absolute_error(targets, predictions)),
+        "rmse": float(mean_squared_error(targets, predictions) ** 0.5),
+        "training_engines": int(train_df["unit_id"].nunique()),
+        "validation_engines": int(validation_df["unit_id"].nunique()),
         "training_rows": int(len(train_df)),
         "validation_rows": int(len(validation_df)),
     }
@@ -80,20 +61,13 @@ def save_artifacts(
     metrics: dict[str, float],
 ) -> None:
     """Save the trained model and evaluation metrics."""
-    ARTIFACTS_DIRECTORY.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    ARTIFACTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     model_path = ARTIFACTS_DIRECTORY / "random_forest.joblib"
     metrics_path = ARTIFACTS_DIRECTORY / "baseline_metrics.json"
 
     joblib.dump(model, model_path)
-
-    metrics_path.write_text(
-        json.dumps(metrics, indent=2),
-        encoding="utf-8",
-    )
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     print(f"Saved model: {model_path}")
     print(f"Saved metrics: {metrics_path}")

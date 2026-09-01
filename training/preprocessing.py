@@ -1,7 +1,5 @@
 """Feature preprocessing for LSTM training."""
 
-from __future__ import annotations
-
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
 
@@ -12,22 +10,11 @@ def fit_feature_scaler(
     train_dataframe: pd.DataFrame,
 ) -> RobustScaler:
     """Fit a RobustScaler using training features only."""
-    missing_columns = set(FEATURE_COLUMNS).difference(
-        train_dataframe.columns
-    )
-
-    if missing_columns:
-        raise ValueError(
-            f"DataFrame is missing columns: {sorted(missing_columns)}"
-        )
-
     if train_dataframe.empty:
         raise ValueError("train_dataframe must not be empty")
+    _check_features(train_dataframe)
 
-    scaler = RobustScaler()
-    scaler.fit(train_dataframe[FEATURE_COLUMNS])
-
-    return scaler
+    return RobustScaler().fit(train_dataframe[FEATURE_COLUMNS])
 
 
 def transform_features(
@@ -35,25 +22,17 @@ def transform_features(
     scaler: RobustScaler,
 ) -> pd.DataFrame:
     """Return a copy with robust-scaled model features."""
-    missing_columns = set(FEATURE_COLUMNS).difference(
-        dataframe.columns
-    )
-
-    if missing_columns:
-        raise ValueError(
-            f"DataFrame is missing columns: {sorted(missing_columns)}"
-        )
-
+    _check_features(dataframe)
     result = dataframe.copy()
-
-    transformed_features = scaler.transform(
-        result[FEATURE_COLUMNS]
-    )
-
     result[FEATURE_COLUMNS] = pd.DataFrame(
-        transformed_features,
+        scaler.transform(result[FEATURE_COLUMNS]),
         columns=FEATURE_COLUMNS,
         index=result.index,
     )
-
     return result
+
+
+def _check_features(dataframe: pd.DataFrame) -> None:
+    missing = set(FEATURE_COLUMNS) - set(dataframe.columns)
+    if missing:
+        raise ValueError(f"DataFrame is missing columns: {sorted(missing)}")

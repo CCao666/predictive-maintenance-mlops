@@ -1,7 +1,5 @@
 """Register the best MLflow tuning run and assign a model alias."""
 
-from __future__ import annotations
-
 import argparse
 import json
 from pathlib import Path

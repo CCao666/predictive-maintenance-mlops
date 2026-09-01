@@ -1,7 +1,5 @@
 """PyTorch dataset for fixed-length C-MAPSS sequences."""
 
-from __future__ import annotations
-
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -29,20 +27,11 @@ class RULSequenceDataset(Dataset):
                 "sequences and targets must contain the same number of samples"
             )
 
-        self.sequences = torch.as_tensor(
-            sequences,
-            dtype=torch.float32,
-        )
-        self.targets = torch.as_tensor(
-            targets,
-            dtype=torch.float32,
-        )
+        self.sequences = torch.as_tensor(sequences, dtype=torch.float32)
+        self.targets = torch.as_tensor(targets, dtype=torch.float32)
 
     def __len__(self) -> int:
-        """Return the number of sequence-target pairs."""
         return len(self.targets)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return one sequence and its scalar RUL target."""
         return self.sequences[index], self.targets[index]
-
