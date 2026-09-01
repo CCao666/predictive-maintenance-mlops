@@ -1,0 +1,16 @@
+services:
+  inference-api:
+    build:
+      context: .
+    image: predictive-maintenance-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: sqlite:////app/mlflow.db
+      MODEL_NAME: predictive-maintenance-rul
+      MODEL_ALIAS: champion
+    volumes:
+      - ./mlflow.db:/app/mlflow.db:ro
+      # Existing MLflow runs store this absolute artifact path in mlflow.db.
+      - ./mlruns:/Users/chunyangcao/Desktop/Projects/Real-Time Predictive Maintenance ML Platform/mlruns
+    restart: unless-stopped

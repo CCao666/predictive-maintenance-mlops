@@ -5,3 +5,7 @@ scikit-learn
 joblib
 torch
 mlflow
+fastapi
+uvicorn
+httpx
+prometheus-client
