@@ -46,7 +46,9 @@ jobs:
           docker compose -f compose.ci.yaml run --rm --no-deps --entrypoint /bin/promtool prometheus check rules /etc/prometheus/alert_rules.yml
           docker compose -f compose.ci.yaml run --rm --no-deps --entrypoint /bin/amtool alertmanager check-config /etc/alertmanager/alertmanager.yml
       - name: Start integration services
-        run: docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180
+        run: |
+          docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180 postgres kafka inference-api alert-webhook alertmanager prometheus
+          docker compose -f compose.ci.yaml up -d stream-consumer prediction-writer
       - name: Test prediction persistence and alert lifecycle
         env:
           RUN_INTEGRATION_TESTS: "1"

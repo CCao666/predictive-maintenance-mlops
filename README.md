@@ -231,7 +231,8 @@ Run the same integration checks locally (requires Docker):
 
 ```bash
 docker build -t predictive-maintenance-ci:latest .
-docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180
+docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180 postgres kafka inference-api alert-webhook alertmanager prometheus
+docker compose -f compose.ci.yaml up -d stream-consumer prediction-writer
 RUN_INTEGRATION_TESTS=1 python -m pytest tests/integration -v
 docker compose -f compose.ci.yaml down --volumes --remove-orphans
 ```
