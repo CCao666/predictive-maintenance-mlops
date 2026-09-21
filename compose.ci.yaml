@@ -1,0 +1,121 @@
+# A separate project: never connects to the demo database or MLflow registry.
+name: predictive-maintenance-ci
+
+x-app: &app
+  image: predictive-maintenance-ci:latest
+  healthcheck:
+    disable: true
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: maintenance_ci
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ci", "-d", "maintenance_ci"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:4.1.2
+    ports:
+      - "127.0.0.1:19092:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:19092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:29092", "--list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  inference-api:
+    <<: *app
+    command: ["uvicorn", "tests.integration.app:create_test_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - ./tests:/app/tests:ro
+    ports:
+      - "127.0.0.1:18000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  stream-consumer:
+    <<: *app
+    command: ["python", "-m", "streaming.consumer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      INFERENCE_API_URL: http://inference-api:8000
+    depends_on:
+      kafka:
+        condition: service_healthy
+      inference-api:
+        condition: service_healthy
+
+  prediction-writer:
+    <<: *app
+    command: ["python", "-m", "streaming.prediction_writer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql://ci:ci@postgres:5432/maintenance_ci
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  alert-webhook:
+    <<: *app
+    command: ["uvicorn", "monitoring.alert_webhook:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      DATABASE_URL: postgresql://ci:ci@postgres:5432/maintenance_ci
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--cluster.listen-address="]
+    depends_on:
+      alert-webhook:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    depends_on:
+      inference-api:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started

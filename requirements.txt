@@ -4,8 +4,10 @@ pytest
 scikit-learn
 joblib
 torch
-mlflow
+mlflow==3.15.2
 fastapi
 uvicorn
 httpx
 prometheus-client
+kafka-python-ng
+psycopg[binary]

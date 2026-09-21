@@ -8,3 +8,7 @@ mlruns/
 mlflow.db*
 artifacts/
 upstream-reference/
+.env
+.env.*
+!.env.example
+test-results/

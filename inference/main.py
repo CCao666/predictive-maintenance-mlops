@@ -1,12 +1,15 @@
 """FastAPI application for online RUL prediction."""
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from inference.metrics import (
+    ENGINE_LAST_PREDICTION,
+    ENGINE_RUL,
     MODEL_INFO,
     PREDICTED_RUL,
     PREDICTION_ERRORS,
@@ -74,6 +77,12 @@ def create_app(model_manager: ModelManager | None = None) -> FastAPI:
             with PREDICTION_LATENCY.time():
                 predicted_rul = manager.predict(request.sequence)
             PREDICTED_RUL.observe(predicted_rul)
+            ENGINE_RUL.labels(engine_id=str(request.engine_id)).set(
+                predicted_rul
+            )
+            ENGINE_LAST_PREDICTION.labels(
+                engine_id=str(request.engine_id)
+            ).set(time.time())
         except ValueError as error:
             PREDICTION_ERRORS.inc()
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -99,4 +108,3 @@ def create_app(model_manager: ModelManager | None = None) -> FastAPI:
 
 
 app = create_app()
-

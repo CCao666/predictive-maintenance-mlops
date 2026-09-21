@@ -1,0 +1,15 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: prediction-alert-database
+  group_by: [alertname, engine_id]
+  group_wait: 5s
+  group_interval: 30s
+  repeat_interval: 4h
+
+receivers:
+  - name: prediction-alert-database
+    webhook_configs:
+      - url: http://alert-webhook:8080/alerts
+        send_resolved: true

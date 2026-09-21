@@ -1,0 +1,81 @@
+groups:
+  - name: predictive-maintenance
+    rules:
+      - alert: EngineRULUrgent
+        expr: predicted_rul_by_engine <= 15 and on(engine_id) (time() - engine_last_prediction_timestamp_seconds < 300)
+        labels:
+          severity: critical
+        annotations:
+          summary: "Engine {{ $labels.engine_id }} requires immediate review"
+          description: "Predicted RUL is {{ $value | printf \"%.1f\" }} cycles. Inspect immediately and assess derating or shutdown."
+
+      - alert: EngineRULCritical
+        expr: predicted_rul_by_engine > 15 and predicted_rul_by_engine <= 40 and on(engine_id) (time() - engine_last_prediction_timestamp_seconds < 300)
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Engine {{ $labels.engine_id }} is in the critical RUL range"
+          description: "Predicted RUL is {{ $value | printf \"%.1f\" }} cycles. Schedule maintenance at the earliest safe opportunity."
+
+      - alert: EngineRULWarning
+        expr: predicted_rul_by_engine > 40 and predicted_rul_by_engine <= 50 and on(engine_id) (time() - engine_last_prediction_timestamp_seconds < 300)
+        for: 20s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Engine {{ $labels.engine_id }} entered the warning range"
+          description: "Predicted RUL is {{ $value | printf \"%.1f\" }} cycles. Create a maintenance work order and increase inspection frequency."
+
+      - alert: EngineRULWatch
+        expr: predicted_rul_by_engine > 50 and predicted_rul_by_engine <= 60 and on(engine_id) (time() - engine_last_prediction_timestamp_seconds < 300)
+        for: 30s
+        labels:
+          severity: info
+        annotations:
+          summary: "Engine {{ $labels.engine_id }} entered the watch range"
+          description: "Predicted RUL is {{ $value | printf \"%.1f\" }} cycles. Review its trend and maintenance capacity."
+
+      - alert: InferenceAPIDown
+        expr: up{job="inference-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Inference API is unavailable"
+          description: "Prometheus has been unable to scrape the inference API for 30 seconds."
+
+      - alert: PredictionErrors
+        expr: increase(prediction_errors_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction errors detected"
+          description: "The inference API recorded prediction failures during the last five minutes."
+
+      - alert: HighPredictionLatency
+        expr: histogram_quantile(0.95, sum by (le) (rate(prediction_latency_seconds_bucket[5m]))) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction p95 latency is high"
+          description: "Prediction p95 latency has exceeded 50 ms for two minutes."
+
+      - alert: PredictionDataStale
+        expr: time() - max(engine_last_prediction_timestamp_seconds) > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction stream is stale"
+          description: "No engine prediction has been observed for more than five minutes."
+
+      - alert: NoPredictions
+        expr: absent(engine_last_prediction_timestamp_seconds)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No prediction metrics are available"
+          description: "The inference API has exposed no engine predictions for five minutes."

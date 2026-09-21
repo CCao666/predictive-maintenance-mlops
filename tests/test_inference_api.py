@@ -74,6 +74,9 @@ def test_predict():
         "model_version": "1",
         "model_alias": "champion",
     }
+    metrics = client.get("/metrics").text
+    assert 'predicted_rul_by_engine{engine_id="7"} 42.5' in metrics
+    assert 'engine_last_prediction_timestamp_seconds{engine_id="7"}' in metrics
 
 
 def test_predict_rejects_wrong_sequence_length():
@@ -94,4 +97,3 @@ def test_metrics_are_exposed():
 
     assert response.status_code == 200
     assert "prediction_requests_total" in response.text
-

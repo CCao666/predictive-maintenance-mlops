@@ -12,6 +12,8 @@ RUN pip install --upgrade pip && \
     pip install -r requirements-api.txt
 
 COPY inference/ inference/
+COPY monitoring/ monitoring/
+COPY streaming/ streaming/
 COPY training/ training/
 
 EXPOSE 8000

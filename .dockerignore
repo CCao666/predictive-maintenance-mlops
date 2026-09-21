@@ -12,3 +12,6 @@ mlflow.db
 mlruns
 tests
 upstream-reference
+.env
+.env.*
+test-results
