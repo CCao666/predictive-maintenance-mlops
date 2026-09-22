@@ -265,8 +265,9 @@ images to GitHub Container Registry:
 - `ghcr.io/ccao666/predictive-maintenance-mlflow`
 
 Each image receives `main`, `latest`, and immutable `sha-<commit>` tags. A `v*`
-Git tag also produces a matching release image tag. Pull requests only run CI
-and never publish images.
+Git tag also produces a matching release image tag. Images support both
+`linux/amd64` production hosts and `linux/arm64` development machines. Pull
+requests only run CI and never publish images.
 
 Deploy a tested image set to a Docker Compose staging host with:
 
