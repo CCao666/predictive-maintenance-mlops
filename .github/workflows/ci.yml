@@ -39,6 +39,7 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose -f compose.ci.yaml config --quiet
+          docker compose -f compose.yaml -f compose.staging.yaml config --quiet
       - name: Build service images
         run: |
           docker build -t predictive-maintenance-ci:latest .
@@ -70,3 +71,61 @@ jobs:
       - name: Remove temporary integration services
         if: always()
         run: docker compose -f compose.ci.yaml down --volumes --remove-orphans
+
+  publish:
+    name: Publish deployable images
+    needs: verify
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create API image tags
+        id: api-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ccao666/predictive-maintenance-api
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.api-meta.outputs.tags }}
+          labels: ${{ steps.api-meta.outputs.labels }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Create MLflow image tags
+        id: mlflow-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ccao666/predictive-maintenance-mlflow
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish MLflow image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mlflow
+          push: true
+          tags: ${{ steps.mlflow-meta.outputs.tags }}
+          labels: ${{ steps.mlflow-meta.outputs.labels }}
+          cache-from: type=gha,scope=mlflow
+          cache-to: type=gha,mode=max,scope=mlflow

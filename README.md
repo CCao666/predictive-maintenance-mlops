@@ -3,9 +3,9 @@
 [![CI](https://github.com/CCao666/predictive-maintenance-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/CCao666/predictive-maintenance-mlops/actions/workflows/ci.yml)
 
 Predicts remaining useful life (RUL) from NASA C-MAPSS turbofan sensor data.
-This local production simulation covers training and MLflow model registration,
+This production-style simulation covers training and MLflow model registration,
 FastAPI inference, Kafka sensor replay, PostgreSQL prediction storage,
-Prometheus/Grafana monitoring, Alertmanager notifications, and automated CI.
+Prometheus/Grafana monitoring, Alertmanager notifications, and CI/CD to GHCR.
 The LSTM architecture follows `devwithmohit/predictive-maintenance-manufacturing-system`.
 
 ## Setup
@@ -241,7 +241,7 @@ Prometheus and Grafana history is stored in named Docker volumes. Use
 `upstream-reference/` is read-only reference material and is not part of the
 project implementation.
 
-## Continuous integration
+## CI/CD
 
 GitHub Actions runs on pushes, pull requests, and manual dispatch. It runs the
 application tests, validates Compose and monitoring rules, builds the service
@@ -255,9 +255,43 @@ image, and tests two complete paths in an isolated Compose project:
 Only the model manager is substituted with a deterministic test implementation.
 Kafka, HTTP endpoints, PostgreSQL, Prometheus rules, and Alertmanager routing are
 real. These tests check service integration, not model accuracy. The CI image is
-built and exercised on the runner; automatic deployment and registry publishing
-are not configured. Reports and service logs are retained as Actions artifacts
-for seven days.
+built and exercised on the runner. Reports and service logs are retained as
+Actions artifacts for seven days.
+
+After every successful push to `main`, the CD job publishes two deployable
+images to GitHub Container Registry:
+
+- `ghcr.io/ccao666/predictive-maintenance-api`
+- `ghcr.io/ccao666/predictive-maintenance-mlflow`
+
+Each image receives `main`, `latest`, and immutable `sha-<commit>` tags. A `v*`
+Git tag also produces a matching release image tag. Pull requests only run CI
+and never publish images.
+
+Deploy a tested image set to a Docker Compose staging host with:
+
+```bash
+cp .env.example .env
+IMAGE_TAG=sha-<commit> sh scripts/deploy_staging.sh
+```
+
+The deployment uses `compose.staging.yaml` to pull published images instead of
+building source on the host. It starts the Registry first and refuses to start
+the inference stack unless `models:/predictive-maintenance-rul@champion` exists.
+Persistent MLflow, MinIO, PostgreSQL, Prometheus, Grafana, and Alertmanager data
+remain in named volumes when application containers are replaced.
+
+To create a named release after the `main` workflow is green:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+This is continuous delivery: GitHub produces versioned, deployable artifacts,
+while deployment to a particular host is an explicit operation. A future cloud
+or self-hosted runner can call the same script after adding that environment's
+credentials and approval rules.
 
 Run the same integration checks locally (requires Docker):
 

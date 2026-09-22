@@ -1,0 +1,20 @@
+services:
+  mlflow:
+    image: ${MLFLOW_IMAGE:-ghcr.io/ccao666/predictive-maintenance-mlflow}:${IMAGE_TAG:-main}
+    build: null
+
+  inference-api:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
+    build: null
+
+  stream-consumer:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
+
+  prediction-writer:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
+
+  stream-producer:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
+
+  alert-webhook:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
