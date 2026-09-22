@@ -2,17 +2,92 @@ services:
   postgres:
     image: postgres:18.6-alpine
     environment:
-      POSTGRES_DB: maintenance
-      POSTGRES_USER: maintenance
-      POSTGRES_PASSWORD: maintenance
+      POSTGRES_DB: ${POSTGRES_DB:-maintenance}
+      POSTGRES_USER: ${POSTGRES_USER:-maintenance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maintenance}
     volumes:
       - postgres18-data:/var/lib/postgresql
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U maintenance -d maintenance"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-maintenance} -d ${POSTGRES_DB:-maintenance}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  mlflow-db-init:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-maintenance}
+      POSTGRES_USER: ${POSTGRES_USER:-maintenance}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-maintenance}
+      MLFLOW_DB: ${MLFLOW_DB:-mlflow}
+    volumes:
+      - ./database/create_mlflow_database.sh:/create_mlflow_database.sh:ro
+    command: ["/bin/sh", "/create_mlflow_database.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MLFLOW_BUCKET: ${MLFLOW_BUCKET:-mlflow}
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      /usr/bin/mc mb --ignore-existing local/$$MLFLOW_BUCKET
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    image: predictive-maintenance-mlflow:latest
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER:-maintenance}:${POSTGRES_PASSWORD:-maintenance}@postgres:5432/${MLFLOW_DB:-mlflow}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - "${MLFLOW_PORT:-5050}:5000"
+    depends_on:
+      mlflow-db-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     restart: unless-stopped
 
   kafka:
@@ -46,13 +121,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MLFLOW_TRACKING_URI: sqlite:////app/mlflow.db
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       MODEL_NAME: predictive-maintenance-rul
       MODEL_ALIAS: champion
-    volumes:
-      - ./mlflow.db:/app/mlflow.db:ro
-      # Existing MLflow runs store this absolute artifact path in mlflow.db.
-      - ./mlruns:/Users/chunyangcao/Desktop/Projects/Real-Time Predictive Maintenance ML Platform/mlruns
+    depends_on:
+      mlflow:
+        condition: service_healthy
     restart: unless-stopped
 
   stream-consumer:
@@ -79,7 +153,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       KAFKA_RESULT_TOPIC: engine-rul-predictions
-      DATABASE_URL: postgresql://maintenance:maintenance@postgres:5432/maintenance
+      DATABASE_URL: postgresql://${POSTGRES_USER:-maintenance}:${POSTGRES_PASSWORD:-maintenance}@postgres:5432/${POSTGRES_DB:-maintenance}
     depends_on:
       kafka:
         condition: service_healthy
@@ -138,7 +212,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgresql://maintenance:maintenance@postgres:5432/maintenance
+      DATABASE_URL: postgresql://${POSTGRES_USER:-maintenance}:${POSTGRES_PASSWORD:-maintenance}@postgres:5432/${POSTGRES_DB:-maintenance}
     depends_on:
       postgres:
         condition: service_healthy
@@ -183,6 +257,7 @@ services:
 
 volumes:
   postgres18-data:
+  minio-data:
   prometheus-data:
   grafana-data:
   alertmanager-data:

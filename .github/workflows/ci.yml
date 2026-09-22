@@ -39,8 +39,10 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose -f compose.ci.yaml config --quiet
-      - name: Build service image
-        run: docker build -t predictive-maintenance-ci:latest .
+      - name: Build service images
+        run: |
+          docker build -t predictive-maintenance-ci:latest .
+          docker build -f Dockerfile.mlflow -t predictive-maintenance-mlflow-ci:latest .
       - name: Validate monitoring configuration
         run: |
           docker compose -f compose.ci.yaml run --rm --no-deps --entrypoint /bin/promtool prometheus check rules /etc/prometheus/alert_rules.yml

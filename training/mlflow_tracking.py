@@ -1,5 +1,6 @@
 """MLflow experiment tracking for RUL model training."""
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +11,11 @@ from torch import nn
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXPERIMENT_NAME = "predictive-maintenance-rul"
-DEFAULT_TRACKING_URI = f"sqlite:///{PROJECT_ROOT / 'mlflow.db'}"
-DEFAULT_ARTIFACT_LOCATION = (PROJECT_ROOT / "mlruns").as_uri()
+LOCAL_TRACKING_URI = f"sqlite:///{PROJECT_ROOT / 'mlflow.db'}"
+DEFAULT_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", LOCAL_TRACKING_URI)
+DEFAULT_ARTIFACT_LOCATION = os.getenv("MLFLOW_ARTIFACT_LOCATION")
+if DEFAULT_ARTIFACT_LOCATION is None and DEFAULT_TRACKING_URI == LOCAL_TRACKING_URI:
+    DEFAULT_ARTIFACT_LOCATION = (PROJECT_ROOT / "mlruns").as_uri()
 
 
 class MLflowExperimentTracker:
@@ -21,7 +25,7 @@ class MLflowExperimentTracker:
         self,
         tracking_uri: str = DEFAULT_TRACKING_URI,
         experiment_name: str = DEFAULT_EXPERIMENT_NAME,
-        artifact_location: str = DEFAULT_ARTIFACT_LOCATION,
+        artifact_location: str | None = DEFAULT_ARTIFACT_LOCATION,
     ) -> None:
         mlflow.set_tracking_uri(tracking_uri)
         self.experiment_name = experiment_name
@@ -29,13 +33,17 @@ class MLflowExperimentTracker:
         self.experiment_id = self._get_or_create_experiment(artifact_location)
         self.run_id: str | None = None
 
-    def _get_or_create_experiment(self, artifact_location: str) -> str:
+    def _get_or_create_experiment(
+        self,
+        artifact_location: str | None,
+    ) -> str:
         experiment = self.client.get_experiment_by_name(self.experiment_name)
         if experiment is not None:
             return experiment.experiment_id
+        if artifact_location is None:
+            return self.client.create_experiment(self.experiment_name)
         return self.client.create_experiment(
-            self.experiment_name,
-            artifact_location=artifact_location,
+            self.experiment_name, artifact_location=artifact_location
         )
 
     def start_run(

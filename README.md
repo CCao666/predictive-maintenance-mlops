@@ -19,16 +19,12 @@ python -m pip install -r requirements.txt
 ```
 
 Model weights, local MLflow runs, and databases are excluded from Git. Application
-tests and the isolated CI stack work without them. To create your own champion:
+tests and the isolated CI stack work without them. Copy the development settings
+before starting the service stack:
 
 ```bash
-python -m training.tune_lstm
-python -m training.register_model
+cp .env.example .env
 ```
-
-The demo Compose file still reflects the original machine's MLflow artifact
-mount. On a new machine, update that mount to match the absolute artifact path
-in your newly created MLflow runs before starting the model-backed demo.
 
 ## Quick checks
 
@@ -40,7 +36,12 @@ python -m training.inspect_data
 
 ## Train and track
 
+Start the shared tracking infrastructure, then point host-side training commands
+at it:
+
 ```bash
+docker compose up -d --build postgres minio minio-init mlflow
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5050
 python -m training.train_lstm --run-name reference-lstm
 ```
 
@@ -49,12 +50,28 @@ sequences, capped RUL labels, early stopping, and learning-rate reduction.
 
 ## MLflow
 
+The Compose stack stores MLflow metadata in its own PostgreSQL database and
+stores model artifacts in the `mlflow` MinIO bucket. MLflow proxies artifact
+traffic, so training and inference clients need only the tracking URL; they do
+not receive MinIO credentials.
+
+To select and register a new champion:
+
 ```bash
-mlflow server \
-  --backend-store-uri sqlite:///mlflow.db \
-  --host 127.0.0.1 \
-  --port 5000
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5050
+python -m training.tune_lstm
+python -m training.register_model
 ```
+
+To copy the champion from this project's earlier local SQLite Registry instead
+of retraining it:
+
+```bash
+python -m training.migrate_registry
+```
+
+The migration is idempotent: rerunning it reuses the version with the same
+source run and restores its `champion` alias.
 
 The registered production candidate is available as:
 
@@ -66,7 +83,8 @@ Run the official FD001 holdout evaluation and attach the results to the
 champion's MLflow run:
 
 ```bash
-python -m training.evaluate_test --log-to-mlflow
+MLFLOW_TRACKING_URI=http://127.0.0.1:5050 \
+  python -m training.evaluate_test --log-to-mlflow
 ```
 
 This evaluates one final prediction per test engine, using `RUL_FD001.txt` as
@@ -76,7 +94,8 @@ sequences before scaling. Results are saved under `artifacts/test_evaluation/`.
 ## Inference API
 
 ```bash
-uvicorn inference.main:app --host 0.0.0.0 --port 8000
+MLFLOW_TRACKING_URI=http://127.0.0.1:5050 \
+  uvicorn inference.main:app --host 0.0.0.0 --port 8000
 ```
 
 Useful endpoints:
@@ -93,10 +112,18 @@ Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
 ## Docker
 
-Build and start the inference service with its local MLflow Registry:
+On a new machine, initialize the Registry and register a champion before
+starting the full stack:
 
 ```bash
-docker compose up --build
+cp .env.example .env
+docker compose up -d --build postgres minio minio-init mlflow
+
+# Choose one:
+python -m training.migrate_registry  # when the old local Registry is available
+# or train and register using the commands in "Train and track"
+
+docker compose up -d --build
 ```
 
 Then verify the container and loaded champion model:
@@ -113,12 +140,17 @@ Stop it with:
 docker compose down
 ```
 
-The Compose file mounts `mlflow.db` read-only and mounts `mlruns/` for artifact
-access. MLflow needs write access to the artifact directory to create its small
-registered-model metadata file. The unusual absolute `mlruns` target is required
-because existing local runs record their artifact locations as absolute paths.
-A later production deployment should use a separate MLflow server and shared
-artifact storage instead.
+Development interfaces:
+
+- MLflow UI: `http://127.0.0.1:5050`
+- MinIO API: `http://127.0.0.1:9000`
+- MinIO Console: `http://127.0.0.1:9001`
+
+The default MinIO credentials live in `.env.example` for local development.
+Copy them into an untracked `.env` and replace them before using the stack on a
+shared network. PostgreSQL and MinIO data persist in Docker named volumes, so
+`docker compose down` keeps Registry state and `docker compose down -v` removes
+it intentionally.
 
 ## Kafka sensor stream
 
