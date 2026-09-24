@@ -13,6 +13,12 @@ services:
   prediction-writer:
     image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
 
+  drift-monitor:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
+
+  retrain-coordinator:
+    image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
+
   stream-producer:
     image: ${API_IMAGE:-ghcr.io/ccao666/predictive-maintenance-api}:${IMAGE_TAG:-main}
 

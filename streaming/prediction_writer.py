@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 INSERT_PREDICTION = """
 INSERT INTO rul_predictions (
-    engine_id, time_cycle, predicted_rul, health_status, alert_level,
+    dataset_id, engine_id, time_cycle, predicted_rul, health_status, alert_level,
     model_name, model_version, model_alias, predicted_at
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (engine_id, time_cycle, model_version) DO UPDATE SET
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (dataset_id, engine_id, time_cycle, model_version) DO UPDATE SET
     predicted_rul = EXCLUDED.predicted_rul,
     health_status = EXCLUDED.health_status,
     alert_level = EXCLUDED.alert_level,
@@ -33,6 +33,7 @@ def save_prediction(connection, event: PredictionEvent) -> None:
         cursor.execute(
             INSERT_PREDICTION,
             (
+                event.dataset_id,
                 event.engine_id,
                 event.time_cycle,
                 event.predicted_rul,
@@ -47,11 +48,32 @@ def save_prediction(connection, event: PredictionEvent) -> None:
     connection.commit()
 
 
+def ensure_schema(connection) -> None:
+    """Upgrade existing local databases without deleting their data."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "ALTER TABLE rul_predictions "
+            "ADD COLUMN IF NOT EXISTS dataset_id TEXT NOT NULL DEFAULT 'FD001'"
+        )
+        cursor.execute(
+            "ALTER TABLE rul_predictions DROP CONSTRAINT IF EXISTS "
+            "rul_predictions_engine_id_time_cycle_model_version_key"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "rul_predictions_dataset_engine_cycle_model_uidx "
+            "ON rul_predictions "
+            "(dataset_id, engine_id, time_cycle, model_version)"
+        )
+    connection.commit()
+
+
 def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     topic = os.getenv("KAFKA_RESULT_TOPIC", RESULT_TOPIC)
     connection = connect_with_retry()
+    ensure_schema(connection)
     consumer = KafkaConsumer(
         topic,
         bootstrap_servers=bootstrap_servers,

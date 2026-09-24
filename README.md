@@ -152,6 +152,125 @@ shared network. PostgreSQL and MinIO data persist in Docker named volumes, so
 `docker compose down` keeps Registry state and `docker compose down -v` removes
 it intentionally.
 
+## Kubernetes (local kind cluster)
+
+Only the stateless `inference-api` and `stream-consumer` workloads run in
+Kubernetes. PostgreSQL, Kafka, MLflow, MinIO, Prometheus, Grafana, Alertmanager,
+and the prediction writer remain in Compose. The pods reach host-published
+Kafka, MLflow, and MinIO ports through `host.docker.internal`, so these steps
+target kind on Docker Desktop.
+
+MLflow generates artifact download URLs with its Compose-internal `minio`
+hostname. The Kubernetes `minio` ExternalName Service resolves that hostname to
+`host.docker.internal`, allowing pods to download the champion model without
+deploying MinIO in the cluster.
+
+Start the core Compose-side dependencies without starting the Compose copies of
+the API and consumer:
+
+```bash
+docker compose up -d --build postgres minio minio-init mlflow kafka
+docker compose up -d --wait --wait-timeout 180 postgres minio mlflow kafka
+```
+
+The Registry must already contain
+`models:/predictive-maintenance-rul@champion`; use the training or migration
+steps above on a new machine. Build the shared image, create the cluster, and
+import the image directly into kind:
+
+```bash
+docker build \
+  -t predictive-maintenance-api:local \
+  -t predictive-maintenance-api:latest .
+kind create cluster --name predictive-maintenance --wait 120s
+kind load docker-image predictive-maintenance-api:local \
+  --name predictive-maintenance
+```
+
+The other stateful/monitoring services can remain in Compose without pulling in
+the Compose API through `depends_on`:
+
+```bash
+docker compose up -d --no-deps \
+  prediction-writer drift-monitor retrain-coordinator alert-webhook alertmanager
+docker compose up -d --no-deps prometheus grafana
+```
+
+The HPA needs Metrics Server, which a default kind cluster does not include:
+
+```bash
+kubectl apply -f \
+  https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch deployment metrics-server -n kube-system --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+kubectl rollout status deployment/metrics-server -n kube-system --timeout=120s
+```
+
+Keep local MinIO credentials out of Git. Create `k8s/secrets.env` with file mode
+`0600` and these two entries, using the same values as the Compose `.env`:
+
+```text
+AWS_ACCESS_KEY_ID=<MINIO_ROOT_USER value>
+AWS_SECRET_ACCESS_KEY=<MINIO_ROOT_PASSWORD value>
+```
+
+Create the Secret from that ignored file, then apply all versioned manifests:
+
+```bash
+kubectl create namespace predictive-maintenance \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic predictive-maintenance-secrets \
+  --namespace predictive-maintenance \
+  --from-env-file=k8s/secrets.env \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k k8s
+kubectl rollout status deployment/inference-api \
+  -n predictive-maintenance --timeout=300s
+kubectl rollout status deployment/stream-consumer \
+  -n predictive-maintenance --timeout=300s
+kubectl get pods,service,hpa -n predictive-maintenance
+```
+
+Reach the ClusterIP service locally and verify the probes and loaded model:
+
+```bash
+kubectl port-forward -n predictive-maintenance service/inference-api 8000:8000
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+curl http://127.0.0.1:8000/model-info
+```
+
+In another terminal, delete one API pod and watch its Deployment restore the
+replica count automatically:
+
+```bash
+kubectl get pods -n predictive-maintenance \
+  -l app.kubernetes.io/name=inference-api
+POD_NAME=$(kubectl get pods -n predictive-maintenance \
+  -l app.kubernetes.io/name=inference-api \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl delete pod "$POD_NAME" -n predictive-maintenance --wait=false
+kubectl get pods -n predictive-maintenance -w
+```
+
+To test a rolling update, build and load another tag, update both Deployments,
+and wait for completion:
+
+```bash
+docker build -t predictive-maintenance-api:local-v2 .
+kind load docker-image predictive-maintenance-api:local-v2 \
+  --name predictive-maintenance
+kubectl set image -n predictive-maintenance \
+  deployment/inference-api inference-api=predictive-maintenance-api:local-v2 \
+  deployment/stream-consumer stream-consumer=predictive-maintenance-api:local-v2
+kubectl rollout status deployment/inference-api \
+  -n predictive-maintenance --timeout=300s
+```
+
+Delete only the disposable cluster with
+`kind delete cluster --name predictive-maintenance`. This does not remove the
+Compose volumes holding PostgreSQL, MLflow, MinIO, or monitoring data.
+
 ## Kafka sensor stream
 
 The Compose stack also starts Kafka, replays `test_FD001.txt`, keeps an
@@ -172,11 +291,11 @@ Inspect saved predictions:
 
 ```bash
 docker compose exec postgres psql -U maintenance -d maintenance -c \
-  "SELECT engine_id, time_cycle, predicted_rul, alert_level, predicted_at FROM rul_predictions ORDER BY predicted_at DESC LIMIT 20;"
+  "SELECT dataset_id, engine_id, time_cycle, predicted_rul, alert_level, predicted_at FROM rul_predictions ORDER BY predicted_at DESC LIMIT 20;"
 ```
 
-The prediction table is idempotent by engine, cycle, and model version, so a
-dataset replay updates the same logical prediction rather than creating a
+The prediction table is idempotent by dataset, engine, cycle, and model version,
+so a dataset replay updates the same logical prediction rather than creating a
 duplicate.
 
 To replay a smaller sample from the host:
@@ -202,6 +321,91 @@ The dashboard includes a per-engine selector, RUL history, latest RUL,
 prediction throughput, p95 latency, and errors. Local anonymous read access is
 enabled for convenience; the development administrator credentials are
 `admin` / `admin` and must be changed before any shared deployment.
+
+### Offline drift benchmark
+
+Use FD001 training data as the reference distribution and compare all four
+C-MAPSS test datasets:
+
+```bash
+python -m monitoring.evaluate_drift
+```
+
+The detector runs a two-sample Kolmogorov-Smirnov test on the 3 operating
+settings and 21 sensor features. A feature is drifted when `p < 0.05` and the
+KS statistic is at least `0.20`; requiring both prevents large datasets from
+turning negligible differences into alerts. Reports are written to
+`artifacts/drift/`, including a compact `summary.json` and one detailed report
+per dataset.
+
+FD001 is the no-drift control. FD002 introduces multiple operating conditions,
+FD003 introduces an additional fault mode, and FD004 contains both changes.
+
+### Online drift monitoring
+
+`drift-monitor` independently consumes every sensor event from Kafka. It keeps
+a bounded rolling window per `dataset_id`, compares that window with
+`train_FD001.txt`, publishes each result to `model-drift-events`, and exposes
+Prometheus metrics on `http://127.0.0.1:8081/metrics`. The production defaults
+wait for 1,000 observations, retain 5,000, and recheck every 500 observations.
+
+Replay a shifted dataset and watch the result:
+
+```bash
+docker compose up -d --build drift-monitor retrain-coordinator prometheus grafana
+docker compose run --rm stream-producer \
+  python -m streaming.producer --data data/cmapss/test_FD002.txt \
+  --dataset-id FD002 --limit 2500 --delay 0
+docker compose logs -f drift-monitor retrain-coordinator
+```
+
+Grafana adds a dataset selector and panels for KS score, drifted-feature ratio,
+severity, drifted-feature count, and monitor throughput. Prometheus sends
+`DataDriftWarning`, `DataDriftCritical`, `DriftMonitorDown`, and
+`DriftChecksStale` alerts to Alertmanager.
+
+### Guarded retraining
+
+Every drift event is persisted in `drift_reports`. Three consecutive critical
+checks create one `pending_review` request, with a 24-hour cooldown and no
+duplicate active request. Detection never starts training or replaces the
+production model automatically.
+
+Inspect the audit trail:
+
+```bash
+docker compose exec postgres psql -U maintenance -d maintenance -c \
+  "SELECT dataset_id, severity, drift_score, drifted_feature_ratio, observed_at FROM drift_reports ORDER BY observed_at DESC LIMIT 20;"
+docker compose exec postgres psql -U maintenance -d maintenance -c \
+  "SELECT id, dataset_id, trigger, status, requested_at FROM retraining_requests ORDER BY requested_at DESC;"
+```
+
+An operator can approve and train a request from the host:
+
+```bash
+export DATABASE_URL=postgresql://maintenance:maintenance@127.0.0.1:5432/maintenance
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5050
+python -m training.retrain_candidate approve <request-id>
+python -m training.retrain_candidate train <request-id> --epochs 60
+```
+
+The candidate combines FD001 training data with the affected dataset, is logged
+to MLflow, and is compared with the current champion on both the affected
+dataset and the original FD001 official holdouts. It becomes the `challenger`
+only when all safety gates pass:
+
+- On the affected dataset, RMSE improves by at least 5%, NASA score does not
+  worsen, and severe lifetime overestimates do not increase.
+- On FD001, RMSE degradation is at most 3%, NASA score does not worsen, and
+  severe lifetime overestimates do not increase.
+
+Even then, production promotion remains explicit:
+
+```bash
+python -m training.retrain_candidate promote <request-id>
+```
+
+This changes the MLflow `champion` alias only for a promotion-eligible request.
 
 ## Alerts and operating actions
 
@@ -244,13 +448,17 @@ project implementation.
 ## CI/CD
 
 GitHub Actions runs on pushes, pull requests, and manual dispatch. It runs the
-application tests, validates Compose and monitoring rules, builds the service
-image, and tests two complete paths in an isolated Compose project:
+application tests, validates Compose, Kubernetes manifests, and monitoring
+rules, builds the service image, and tests three complete paths in an isolated
+Compose project. Kubernetes resources are rendered with Kustomize and checked
+against their schemas with kubeconform before any image is published:
 
 - Sensor readings → Kafka → consumer → FastAPI → result topic → PostgreSQL,
   including duplicate-result replay to verify idempotent writes.
 - Low-RUL prediction → Prometheus rule → Alertmanager → webhook → PostgreSQL,
   followed by a healthy prediction to verify the same alert becomes resolved.
+- Persistent feature drift → Kafka drift event → Prometheus/Alertmanager and
+  PostgreSQL audit records → guarded retraining request.
 
 Only the model manager is substituted with a deterministic test implementation.
 Kafka, HTTP endpoints, PostgreSQL, Prometheus rules, and Alertmanager routing are
@@ -298,13 +506,13 @@ Run the same integration checks locally (requires Docker):
 
 ```bash
 docker build -t predictive-maintenance-ci:latest .
-docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180 postgres kafka inference-api alert-webhook alertmanager prometheus
-docker compose -f compose.ci.yaml up -d stream-consumer prediction-writer
+docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180 postgres kafka inference-api drift-monitor alert-webhook alertmanager prometheus
+docker compose -f compose.ci.yaml up -d stream-consumer prediction-writer retrain-coordinator
 RUN_INTEGRATION_TESTS=1 python -m pytest tests/integration -v
 docker compose -f compose.ci.yaml down --volumes --remove-orphans
 ```
 
 The test project uses its own database and broker and host ports 15432, 19092,
 and 18000. The cleanup command above removes only this disposable test stack.
-Ordinary `python -m pytest` skips its two integration tests unless
+Ordinary `python -m pytest` skips its three integration tests unless
 `RUN_INTEGRATION_TESTS=1` is set.

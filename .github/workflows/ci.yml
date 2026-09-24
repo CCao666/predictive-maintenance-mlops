@@ -40,6 +40,14 @@ jobs:
           docker compose config --quiet
           docker compose -f compose.ci.yaml config --quiet
           docker compose -f compose.yaml -f compose.staging.yaml config --quiet
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.34.1
+      - name: Validate Kubernetes manifests
+        run: |
+          kubectl kustomize k8s > /tmp/predictive-maintenance-k8s.yaml
+          docker run --rm -v /tmp/predictive-maintenance-k8s.yaml:/manifests.yaml:ro ghcr.io/yannh/kubeconform:v0.7.0 \
+            -strict -summary /manifests.yaml
       - name: Build service images
         run: |
           docker build -t predictive-maintenance-ci:latest .
@@ -50,8 +58,8 @@ jobs:
           docker compose -f compose.ci.yaml run --rm --no-deps --entrypoint /bin/amtool alertmanager check-config /etc/alertmanager/alertmanager.yml
       - name: Start integration services
         run: |
-          docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180 postgres kafka inference-api alert-webhook alertmanager prometheus
-          docker compose -f compose.ci.yaml up -d stream-consumer prediction-writer
+          docker compose -f compose.ci.yaml up -d --wait --wait-timeout 180 postgres kafka inference-api drift-monitor alert-webhook alertmanager prometheus
+          docker compose -f compose.ci.yaml up -d stream-consumer prediction-writer retrain-coordinator
       - name: Test prediction persistence and alert lifecycle
         env:
           RUN_INTEGRATION_TESTS: "1"

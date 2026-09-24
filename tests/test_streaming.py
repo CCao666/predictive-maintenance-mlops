@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from streaming.consumer import build_prediction_event, request_prediction
-from streaming.producer import iter_events
+from streaming.producer import infer_dataset_id, iter_events
 from streaming.schemas import SensorEvent, classify_rul
 from streaming.window import EngineWindowStore
 
@@ -59,8 +59,13 @@ def test_iter_events_builds_valid_messages(tmp_path):
     result = list(iter_events(path))
 
     assert len(result) == 1
+    assert result[0].dataset_id == "FD001"
     assert result[0].engine_id == 1
     assert result[0].features.sensor_21 == 21
+
+
+def test_dataset_id_is_inferred_from_filename():
+    assert infer_dataset_id("data/cmapss/test_FD004.txt") == "FD004"
 
 
 def test_prediction_request_uses_expected_payload():
@@ -102,6 +107,16 @@ def test_prediction_event_keeps_engine_cycle_and_model_metadata():
     )
 
     assert prediction.engine_id == 7
+    assert prediction.dataset_id == "FD001"
     assert prediction.time_cycle == 50
     assert prediction.health_status == "imminent"
     assert prediction.alert_level == "urgent"
+
+
+def test_dataset_windows_are_kept_separate():
+    store = EngineWindowStore(sequence_length=2)
+    fd001 = event(1, 1)
+    fd002 = event(1, 1).model_copy(update={"dataset_id": "FD002"})
+
+    assert store.add(fd001) is None
+    assert store.add(fd002) is None

@@ -79,3 +79,39 @@ groups:
         annotations:
           summary: "No prediction metrics are available"
           description: "The inference API has exposed no engine predictions for five minutes."
+
+      - alert: DataDriftWarning
+        expr: data_drift_severity == 1 and on(dataset_id) (time() - data_drift_last_check_timestamp_seconds < 300)
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Data drift warning for {{ $labels.dataset_id }}"
+          description: "The online feature window differs from the FD001 training baseline. Review affected features and operating conditions."
+
+      - alert: DataDriftCritical
+        expr: data_drift_severity == 2 and on(dataset_id) (time() - data_drift_last_check_timestamp_seconds < 300)
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical data drift for {{ $labels.dataset_id }}"
+          description: "At least 75% of monitored features have materially shifted. A retraining request is created only after three consecutive critical checks."
+
+      - alert: DriftMonitorDown
+        expr: up{job="drift-monitor"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Drift monitor is unavailable"
+          description: "Prometheus has been unable to scrape drift-monitor for 30 seconds."
+
+      - alert: DriftChecksStale
+        expr: time() - max(data_drift_last_check_timestamp_seconds) > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Online drift checks are stale"
+          description: "No completed data drift check has been observed for more than five minutes."

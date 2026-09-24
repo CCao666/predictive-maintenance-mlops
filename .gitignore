@@ -12,3 +12,4 @@ upstream-reference/
 .env.*
 !.env.example
 test-results/
+k8s/secrets.env

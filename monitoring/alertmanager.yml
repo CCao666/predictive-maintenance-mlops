@@ -3,7 +3,7 @@ global:
 
 route:
   receiver: prediction-alert-database
-  group_by: [alertname, engine_id]
+  group_by: [alertname, engine_id, dataset_id]
   group_wait: 5s
   group_interval: 30s
   repeat_interval: 4h

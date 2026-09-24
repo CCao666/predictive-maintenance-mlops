@@ -7,5 +7,6 @@ pandas
 prometheus-client
 psycopg[binary]
 scikit-learn
+scipy
 httpx
 uvicorn

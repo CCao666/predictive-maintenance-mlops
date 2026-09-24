@@ -47,6 +47,7 @@ def build_prediction_event(
 ) -> PredictionEvent:
     health_status, alert_level = classify_rul(result["predicted_rul"])
     return PredictionEvent(
+        dataset_id=sensor_event.dataset_id,
         engine_id=sensor_event.engine_id,
         time_cycle=sensor_event.time_cycle,
         predicted_rul=result["predicted_rul"],

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: predictive-maintenance-config
+  namespace: predictive-maintenance
+  labels:
+    app.kubernetes.io/part-of: predictive-maintenance
+data:
+  MLFLOW_TRACKING_URI: http://host.docker.internal:5050
+  MLFLOW_S3_ENDPOINT_URL: http://host.docker.internal:9000
+  AWS_DEFAULT_REGION: us-east-1
+  MODEL_NAME: predictive-maintenance-rul
+  MODEL_ALIAS: champion
+  KAFKA_BOOTSTRAP_SERVERS: host.docker.internal:29092
+  KAFKA_TOPIC: engine-sensor-readings
+  KAFKA_RESULT_TOPIC: engine-rul-predictions
+  INFERENCE_API_URL: http://inference-api:8000
+  SEQUENCE_LENGTH: "50"

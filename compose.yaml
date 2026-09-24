@@ -94,14 +94,15 @@ services:
     image: apache/kafka:4.1.2
     ports:
       - "9092:9092"
+      - "29092:29092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: INTERNAL://:19092,CONTROLLER://:9093,EXTERNAL://:9092
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENERS: INTERNAL://:19092,CONTROLLER://:9093,EXTERNAL://:9092,KUBERNETES://:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092,KUBERNETES://host.docker.internal:29092
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,KUBERNETES:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -163,6 +164,49 @@ services:
       disable: true
     restart: unless-stopped
 
+  drift-monitor:
+    image: predictive-maintenance-api:latest
+    command: ["python", "-m", "monitoring.drift_monitor"]
+    ports:
+      - "8081:8081"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC: engine-sensor-readings
+      KAFKA_DRIFT_TOPIC: model-drift-events
+      DRIFT_REFERENCE_PATH: data/cmapss/train_FD001.txt
+      DRIFT_WINDOW_SIZE: 5000
+      DRIFT_MIN_SAMPLES: 1000
+      DRIFT_CHECK_INTERVAL: 500
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/metrics', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  retrain-coordinator:
+    image: predictive-maintenance-api:latest
+    command: ["python", "-m", "training.retrain_coordinator"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_DRIFT_TOPIC: model-drift-events
+      DATABASE_URL: postgresql://${POSTGRES_USER:-maintenance}:${POSTGRES_PASSWORD:-maintenance}@postgres:5432/${POSTGRES_DB:-maintenance}
+      RETRAIN_CONSECUTIVE_CRITICAL: 3
+      RETRAIN_COOLDOWN_HOURS: 24
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
   stream-producer:
     image: predictive-maintenance-api:latest
     command:
@@ -201,6 +245,8 @@ services:
       - prometheus-data:/prometheus
     depends_on:
       inference-api:
+        condition: service_healthy
+      drift-monitor:
         condition: service_healthy
       alertmanager:
         condition: service_started

@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-api
+  namespace: predictive-maintenance
+  labels:
+    app.kubernetes.io/name: inference-api
+    app.kubernetes.io/part-of: predictive-maintenance
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inference-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inference-api
+        app.kubernetes.io/part-of: predictive-maintenance
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: inference-api
+          image: predictive-maintenance-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: MLFLOW_TRACKING_URI
+            - name: MLFLOW_S3_ENDPOINT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: MLFLOW_S3_ENDPOINT_URL
+            - name: AWS_DEFAULT_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: AWS_DEFAULT_REGION
+            - name: MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: MODEL_NAME
+            - name: MODEL_ALIAS
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: MODEL_ALIAS
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: predictive-maintenance-secrets
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: predictive-maintenance-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi

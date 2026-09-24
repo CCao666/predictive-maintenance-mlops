@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-consumer
+  namespace: predictive-maintenance
+  labels:
+    app.kubernetes.io/name: stream-consumer
+    app.kubernetes.io/part-of: predictive-maintenance
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stream-consumer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: stream-consumer
+        app.kubernetes.io/part-of: predictive-maintenance
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: stream-consumer
+          image: predictive-maintenance-api:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "streaming.consumer"]
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: KAFKA_BOOTSTRAP_SERVERS
+            - name: KAFKA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: KAFKA_TOPIC
+            - name: KAFKA_RESULT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: KAFKA_RESULT_TOPIC
+            - name: INFERENCE_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: INFERENCE_API_URL
+            - name: SEQUENCE_LENGTH
+              valueFrom:
+                configMapKeyRef:
+                  name: predictive-maintenance-config
+                  key: SEQUENCE_LENGTH
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
