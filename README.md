@@ -6,7 +6,7 @@ Predicts remaining useful life (RUL) from NASA C-MAPSS turbofan sensor data.
 This production-style simulation covers training and MLflow model registration,
 FastAPI inference, Kafka sensor replay, PostgreSQL prediction storage,
 Prometheus/Grafana monitoring, Alertmanager notifications, and CI/CD to GHCR.
-The LSTM architecture follows `devwithmohit/predictive-maintenance-manufacturing-system`.
+
 
 ## Demo
 
