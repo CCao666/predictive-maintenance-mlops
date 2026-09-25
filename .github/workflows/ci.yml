@@ -52,6 +52,49 @@ jobs:
         run: |
           docker build -t predictive-maintenance-ci:latest .
           docker build -f Dockerfile.mlflow -t predictive-maintenance-mlflow-ci:latest .
+      - name: Create kind smoke-test cluster
+        uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: predictive-maintenance-ci
+          wait: 120s
+      - name: Test Kubernetes rollout and recovery
+        run: |
+          kind load docker-image predictive-maintenance-ci:latest --name predictive-maintenance-ci
+          kubectl create namespace predictive-maintenance
+          kubectl create secret generic predictive-maintenance-secrets \
+            --namespace predictive-maintenance \
+            --from-literal=AWS_ACCESS_KEY_ID=ci \
+            --from-literal=AWS_SECRET_ACCESS_KEY=ci
+          kubectl apply -k k8s
+          kubectl set image deployment/inference-api \
+            inference-api=predictive-maintenance-ci:latest \
+            --namespace predictive-maintenance
+          kubectl set image deployment/stream-consumer \
+            stream-consumer=predictive-maintenance-ci:latest \
+            --namespace predictive-maintenance
+          kubectl patch deployment inference-api \
+            --namespace predictive-maintenance --type=strategic \
+            --patch-file .github/kind-inference-patch.yaml
+          kubectl patch deployment stream-consumer \
+            --namespace predictive-maintenance --type=strategic \
+            --patch-file .github/kind-consumer-patch.yaml
+          kubectl rollout status deployment/inference-api \
+            --namespace predictive-maintenance --timeout=180s
+          kubectl rollout status deployment/stream-consumer \
+            --namespace predictive-maintenance --timeout=180s
+          kubectl port-forward --namespace predictive-maintenance \
+            service/inference-api 18080:8000 >/tmp/kind-port-forward.log 2>&1 &
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:18080/ready && break
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:18080/health
+          pod_name=$(kubectl get pods --namespace predictive-maintenance \
+            --selector app.kubernetes.io/name=inference-api \
+            --output jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod "$pod_name" --namespace predictive-maintenance
+          kubectl rollout status deployment/inference-api \
+            --namespace predictive-maintenance --timeout=180s
       - name: Validate monitoring configuration
         run: |
           docker compose -f compose.ci.yaml run --rm --no-deps --entrypoint /bin/promtool prometheus check rules /etc/prometheus/alert_rules.yml

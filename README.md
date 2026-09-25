@@ -8,6 +8,28 @@ FastAPI inference, Kafka sensor replay, PostgreSQL prediction storage,
 Prometheus/Grafana monitoring, Alertmanager notifications, and CI/CD to GHCR.
 The LSTM architecture follows `devwithmohit/predictive-maintenance-manufacturing-system`.
 
+## Demo
+
+The Grafana dashboard follows per-engine RUL predictions and inference health in
+real time. The example below replays the FD001 test split through Kafka and the
+deployed inference pipeline.
+
+![FD001 per-engine RUL predictions](docs/assets/grafana-fd001-rul.png)
+
+The online drift monitor uses FD001 as its reference distribution. Replaying
+FD001 settles back to no detected drift, while FD002's additional operating
+conditions produce a critical shift across 22 sensor and operating features.
+
+| FD001 reference replay | FD002 shifted replay |
+| --- | --- |
+| ![FD001 drift baseline](docs/assets/grafana-fd001-drift-baseline.png) | ![FD002 critical data drift](docs/assets/grafana-fd002-drift.png) |
+
+The production candidate is versioned in the MLflow Model Registry and loaded
+by alias, so inference uses `models:/predictive-maintenance-rul@champion`
+instead of a hard-coded model version.
+
+![MLflow registered champion model](docs/assets/mlflow-champion-model.png)
+
 ## Setup
 
 Use Python 3.10 and Docker Compose v2 or newer.
@@ -156,120 +178,46 @@ it intentionally.
 
 Only the stateless `inference-api` and `stream-consumer` workloads run in
 Kubernetes. PostgreSQL, Kafka, MLflow, MinIO, Prometheus, Grafana, Alertmanager,
-and the prediction writer remain in Compose. The pods reach host-published
-Kafka, MLflow, and MinIO ports through `host.docker.internal`, so these steps
-target kind on Docker Desktop.
+and the prediction writer remain in Compose. Docker Desktop, `kind`, and
+`kubectl` are required.
 
-MLflow generates artifact download URLs with its Compose-internal `minio`
-hostname. The Kubernetes `minio` ExternalName Service resolves that hostname to
-`host.docker.internal`, allowing pods to download the champion model without
-deploying MinIO in the cluster.
-
-Start the core Compose-side dependencies without starting the Compose copies of
-the API and consumer:
+Prepare the Compose dependencies and application image:
 
 ```bash
-docker compose up -d --build postgres minio minio-init mlflow kafka
-docker compose up -d --wait --wait-timeout 180 postgres minio mlflow kafka
+./scripts/bootstrap_demo.sh
 ```
 
-The Registry must already contain
-`models:/predictive-maintenance-rul@champion`; use the training or migration
-steps above on a new machine. Build the shared image, create the cluster, and
-import the image directly into kind:
+On a fresh clone, train and register the champion model before deployment:
 
 ```bash
-docker build \
-  -t predictive-maintenance-api:local \
-  -t predictive-maintenance-api:latest .
-kind create cluster --name predictive-maintenance --wait 120s
-kind load docker-image predictive-maintenance-api:local \
-  --name predictive-maintenance
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5050
+python -m training.train_lstm --run-name reference-lstm
+python -m training.register_model
 ```
 
-The other stateful/monitoring services can remain in Compose without pulling in
-the Compose API through `depends_on`:
+Deploy and verify the hybrid kind + Compose environment:
 
 ```bash
-docker compose up -d --no-deps \
-  prediction-writer drift-monitor retrain-coordinator alert-webhook alertmanager
-docker compose up -d --no-deps prometheus grafana
+./scripts/deploy_kind.sh
+./scripts/verify_demo.sh
 ```
 
-The HPA needs Metrics Server, which a default kind cluster does not include:
+The deployment script creates or reuses the kind cluster, installs Metrics
+Server, injects the local MinIO credentials as a Kubernetes Secret, applies the
+Kustomize resources, and waits for both Deployments. It also bridges MLflow's
+Compose-internal `minio` artifact hostname through an ExternalName Service.
 
-```bash
-kubectl apply -f \
-  https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-kubectl patch deployment metrics-server -n kube-system --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
-kubectl rollout status deployment/metrics-server -n kube-system --timeout=120s
-```
-
-Keep local MinIO credentials out of Git. Create `k8s/secrets.env` with file mode
-`0600` and these two entries, using the same values as the Compose `.env`:
-
-```text
-AWS_ACCESS_KEY_ID=<MINIO_ROOT_USER value>
-AWS_SECRET_ACCESS_KEY=<MINIO_ROOT_PASSWORD value>
-```
-
-Create the Secret from that ignored file, then apply all versioned manifests:
-
-```bash
-kubectl create namespace predictive-maintenance \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic predictive-maintenance-secrets \
-  --namespace predictive-maintenance \
-  --from-env-file=k8s/secrets.env \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -k k8s
-kubectl rollout status deployment/inference-api \
-  -n predictive-maintenance --timeout=300s
-kubectl rollout status deployment/stream-consumer \
-  -n predictive-maintenance --timeout=300s
-kubectl get pods,service,hpa -n predictive-maintenance
-```
-
-Reach the ClusterIP service locally and verify the probes and loaded model:
+For local API access, keep this command running in a separate terminal:
 
 ```bash
 kubectl port-forward -n predictive-maintenance service/inference-api 8000:8000
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/ready
-curl http://127.0.0.1:8000/model-info
 ```
 
-In another terminal, delete one API pod and watch its Deployment restore the
-replica count automatically:
+Stop the demo without deleting persistent Docker volumes:
 
 ```bash
-kubectl get pods -n predictive-maintenance \
-  -l app.kubernetes.io/name=inference-api
-POD_NAME=$(kubectl get pods -n predictive-maintenance \
-  -l app.kubernetes.io/name=inference-api \
-  -o jsonpath='{.items[0].metadata.name}')
-kubectl delete pod "$POD_NAME" -n predictive-maintenance --wait=false
-kubectl get pods -n predictive-maintenance -w
+./scripts/cleanup_demo.sh
 ```
-
-To test a rolling update, build and load another tag, update both Deployments,
-and wait for completion:
-
-```bash
-docker build -t predictive-maintenance-api:local-v2 .
-kind load docker-image predictive-maintenance-api:local-v2 \
-  --name predictive-maintenance
-kubectl set image -n predictive-maintenance \
-  deployment/inference-api inference-api=predictive-maintenance-api:local-v2 \
-  deployment/stream-consumer stream-consumer=predictive-maintenance-api:local-v2
-kubectl rollout status deployment/inference-api \
-  -n predictive-maintenance --timeout=300s
-```
-
-Delete only the disposable cluster with
-`kind delete cluster --name predictive-maintenance`. This does not remove the
-Compose volumes holding PostgreSQL, MLflow, MinIO, or monitoring data.
 
 ## Kafka sensor stream
 
@@ -451,7 +399,9 @@ GitHub Actions runs on pushes, pull requests, and manual dispatch. It runs the
 application tests, validates Compose, Kubernetes manifests, and monitoring
 rules, builds the service image, and tests three complete paths in an isolated
 Compose project. Kubernetes resources are rendered with Kustomize and checked
-against their schemas with kubeconform before any image is published:
+against their schemas with kubeconform before any image is published. A
+lightweight kind smoke test also verifies Deployment rollout, health probes,
+ClusterIP routing, and automatic Pod replacement without training a model:
 
 - Sensor readings → Kafka → consumer → FastAPI → result topic → PostgreSQL,
   including duplicate-result replay to verify idempotent writes.
