@@ -35,7 +35,7 @@ Bootstrap complete.
 
 Before deploying to kind, train and register a champion model:
   export MLFLOW_TRACKING_URI=http://127.0.0.1:5050
-  python -m training.train_lstm --run-name reference-lstm
+  python -m training.tune_lstm --epochs 60
   python -m training.register_model
 
 Then run:
